@@ -19,8 +19,10 @@ The Mac in this working directory is just an editing station — nothing actuall
 ./deploy/push-to-pi.sh                    # rsync everything (excludes venvs, pyc)
 ./deploy/push-to-pi.sh --dry-run          # preview
 ./deploy/push-to-pi.sh <file-or-folder>   # push a single path
-./ssh-pi.sh                               # ssh into the Pi
-./ssh-pi.sh "<remote command>"            # one-shot remote command
+./command/ssh-pi.sh                       # ssh into the Pi
+./command/ssh-pi.sh "<remote command>"    # one-shot remote command
+./command/start.sh                        # ssh in and run StartChessGame.py
+./command/reboot-pi.sh                    # reboot the Pi (asks first)
 ```
 
 Deploy creds are hardcoded in [deploy/config.sh](deploy/config.sh) (`pi@192.168.29.6`, password `pi`). `sshpass` must be installed locally (`brew install sshpass`).

@@ -7,8 +7,9 @@ You edit code on your **Mac**, then push it to the **Raspberry Pi** to actually 
 ```
 1. Edit a file on your Mac (in this folder).
 2. Push the change to the Pi:    ./deploy/push-to-pi.sh
-3. Connect to the Pi:            ./ssh-pi.sh
-4. Run the chess program on the Pi to test it.
+3. Start the chess game:         ./command/start.sh
+   (or just SSH in:              ./command/ssh-pi.sh)
+4. Test it on the real board.
 ```
 
 That's the whole loop.
@@ -22,8 +23,10 @@ That's the whole loop.
 | Send all your changes to the Pi | `./deploy/push-to-pi.sh` |
 | Preview what would be sent (no actual change) | `./deploy/push-to-pi.sh --dry-run` |
 | Send just one file | `./deploy/push-to-pi.sh path/to/file.py` |
-| Open a terminal on the Pi | `./ssh-pi.sh` |
-| Run one command on the Pi | `./ssh-pi.sh "ls"` |
+| Start the chess game on the Pi | `./command/start.sh` |
+| Open a terminal on the Pi | `./command/ssh-pi.sh` |
+| Run one command on the Pi | `./command/ssh-pi.sh "ls"` |
+| Reboot the Pi | `./command/reboot-pi.sh` |
 
 ### Once you're on the Pi
 

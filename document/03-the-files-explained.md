@@ -70,5 +70,6 @@ You usually don't need to touch these, but they're kept around as backup.
 ## Deploy scripts (in this Mac, not the Pi)
 
 - [deploy/push-to-pi.sh](../deploy/push-to-pi.sh) — copies your code from your Mac to the Raspberry Pi over the network.
-- [ssh-pi.sh](../ssh-pi.sh) — opens a remote terminal on the Pi from your Mac.
-- [start.sh](../start.sh) — script to start things up.
+- [command/ssh-pi.sh](../command/ssh-pi.sh) — opens a remote terminal on the Pi from your Mac.
+- [command/start.sh](../command/start.sh) — SSH in and start the chess game.
+- [command/reboot-pi.sh](../command/reboot-pi.sh) — reboot the Pi remotely.

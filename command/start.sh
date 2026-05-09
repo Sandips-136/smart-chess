@@ -8,7 +8,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/deploy/config.sh"
+source "$SCRIPT_DIR/../deploy/config.sh"
 
 if ! command -v sshpass >/dev/null 2>&1; then
     echo "Error: sshpass is not installed. Install it with: brew install sshpass"
