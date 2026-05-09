@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/SmartChess/RaspberryPiCode
+Environment=PATH=/home/pi/SmartChess/RaspberryPiCode/smartenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games
 ExecStart=/home/pi/SmartChess/RaspberryPiCode/smartenv/bin/python -u StartChessGame.py
 StandardOutput=journal
 StandardError=journal
