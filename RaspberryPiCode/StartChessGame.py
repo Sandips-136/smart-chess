@@ -145,6 +145,23 @@ def sget():
             mtext=text
             return mtext
 
+def ask_arduino(question):
+    """Wrap getboard() with QUESTION/ANSWER hash-fence banners so the operator
+    can scan the log and see what each prompt to the Arduino was asking and
+    what value came back. The inner getboard() still emits its own
+    'Asking for Input' / 'Received Input' star banners around the serial wait.
+    """
+    fence = '#' * 80
+    dbg(fence)
+    dbg('###  QUESTION: ' + question)
+    dbg(fence)
+    answer = getboard()
+    dbg(fence)
+    dbg('###  ANSWER ({0}): {1!r}'.format(question, answer))
+    dbg(fence)
+    return answer
+
+
 def getboard():
     dbg('************************************Asking for Input ************************************')
     dbg('************************************Asking for Input ************************************')
@@ -396,6 +413,10 @@ def bmove(fmove):
                         stx = smove+hint
                         maxchess.printBoard()
                         # maxfen = maxchess.getFEN()
+                        _fence = '#' * 80
+                        dbg(_fence)
+                        dbg('###  COMPUTER MOVE: ' + smove)
+                        dbg(_fence)
                         print ("computer move: " +smove)
                         sendToScreen (smove[0:2] + '->' + smove[2:4] ,'','Your go...','20')
                         smove ="m"+smove
@@ -513,7 +534,7 @@ sendtoboard("ChooseMode")
 print ("Waiting for mode of play to be decided on the Arduino")
 sendToScreen ('Choose opponent:','1) Against PC','2) Remote human')
 dbg('=== STARTUP: calling getboard() to read gameplay mode ===')
-_raw_mode = getboard()
+_raw_mode = ask_arduino("Choose Mode of Play")
 dbg('STARTUP gameplay mode raw return={0!r}'.format(_raw_mode))
 gameplayMode = _raw_mode[1:].lower()
 print ("Requested gameplay mode:")
@@ -530,7 +551,7 @@ if gameplayMode == 'stockfish':
         print ("Waiting for level command to be received from Arduino")
         sendToScreen ('Choose computer','difficulty level:','(0 -> 8)')
         dbg('=== STOCKFISH: calling getboard() for skill level ===')
-        _raw_skill = getboard()
+        _raw_skill = ask_arduino("Difficulty Level")
         dbg('STOCKFISH skill raw return={0!r}'.format(_raw_skill))
         skillFromArduino = _raw_skill[1:3].lower()
         # If a heypi line gets corrupted past prefix recovery (e.g. it gets
@@ -538,7 +559,7 @@ if gameplayMode == 'stockfish':
         # digits. Discard and re-read until we get a valid skill payload.
         while not skillFromArduino.isdigit():
             dbg('!!! skill payload {0!r} from raw {1!r} is not digits — discarding and re-reading'.format(skillFromArduino, _raw_skill))
-            _raw_skill = getboard()
+            _raw_skill = ask_arduino("Difficulty Level (retry)")
             dbg('STOCKFISH skill raw return (retry)={0!r}'.format(_raw_skill))
             skillFromArduino = _raw_skill[1:3].lower()
         print ("Requested skill level:")
@@ -549,12 +570,12 @@ if gameplayMode == 'stockfish':
         print ("Waiting for move time command to be received from Arduino")
         sendToScreen ('Choose computer','move time:','(0 -> 8)')
         dbg('=== STOCKFISH: calling getboard() for move time ===')
-        _raw_movetime = getboard()
+        _raw_movetime = ask_arduino("Move Time")
         dbg('STOCKFISH movetime raw return={0!r}'.format(_raw_movetime))
         movetimeFromArduino = _raw_movetime[1:].lower()
         while not movetimeFromArduino.isdigit():
             dbg('!!! movetime payload {0!r} from raw {1!r} is not digits — discarding and re-reading'.format(movetimeFromArduino, _raw_movetime))
-            _raw_movetime = getboard()
+            _raw_movetime = ask_arduino("Move Time (retry)")
             dbg('STOCKFISH movetime raw return (retry)={0!r}'.format(_raw_movetime))
             movetimeFromArduino = _raw_movetime[1:].lower()
         print ("Requested time out setting:")
@@ -580,7 +601,7 @@ while True:
 
         # Get  message from board
         dbg('=== MAIN LOOP: calling getboard() for next move ===')
-        bmessage = getboard()
+        bmessage = ask_arduino("Player Move")
         print ("Move command received from Arduino")
         print(bmessage)
         dbg('MAIN LOOP bmessage={0!r}'.format(bmessage))
