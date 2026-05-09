@@ -8,7 +8,7 @@
 
 # initiate chessboard
 from ChessBoard import ChessBoard
-import subprocess, time, serial, sys, traceback
+import subprocess, time, serial, sys, traceback, re, threading
 from datetime import datetime
 maxchess = ChessBoard()
 
@@ -44,6 +44,14 @@ def log_serial_state(ser_obj, label=''):
 
 SERIAL_PORT = '/dev/ttyUSB0'   # for Pi Zero use '/dev/ttyAMA0' and for others use '/dev/ttyUSB0'.
 SERIAL_BAUD = 9600
+
+# Tolerant fallback for the "heypi" prefix. The Arduino occasionally drops a
+# single byte from its serial output when NeoPixel.show() disables interrupts
+# during a UART transmission, so a strict "heypi" check loses real messages
+# (e.g. "heyp-4285" instead of "heypi-4285"). This regex requires the literal
+# "hey" anchor, allows 0-3 chars where "pi" should be, and then expects one of
+# the known protocol typecodes the Arduino emits.
+HEYPI_RE = re.compile(r'^hey[a-z]{0,3}([mngxc\-g])(.*)$', re.IGNORECASE)
 
 if __name__ == '__main__':
     dbg('Opening serial port {0} @ {1} baud, timeout=1s'.format(SERIAL_PORT, SERIAL_BAUD))
@@ -89,7 +97,8 @@ engine = subprocess.Popen(
     'stockfish',
     universal_newlines=True,
     stdin=subprocess.PIPE,
-    stdout=subprocess.PIPE
+    stdout=subprocess.PIPE,
+    bufsize=1,   # line-buffered: every '\n' flushes to Stockfish immediately
     )
 
 def get():
@@ -136,6 +145,7 @@ def sget():
             return mtext
 
 def getboard():
+    dbg('***************** ASKING ARDUINO FOR INPUT *****************')
     dbg('getboard() ENTER — waiting for line from Arduino')
     log_serial_state(ser, 'getboard-enter')
 
@@ -215,32 +225,42 @@ def getboard():
             if btxt.startswith('heypi'):
                 btxt = btxt[len('heypi'):]
                 dbg('getboard() stripped heypi prefix -> {0!r}'.format(btxt))
-
-                if btxt.startswith('m'):
-                    btxt = btxt[1:]
-                    dbg('getboard() stripped leading m -> {0!r}'.format(btxt))
-
-                dbg('getboard() RETURN {0!r}'.format(btxt))
-                print(btxt)
-                return btxt
-
             else:
-                non_heypi_lines += 1
-                dbg('getboard() line did not start with heypi — ignoring (non-heypi count={0})'.format(non_heypi_lines))
-                # If we've been getting Arduino chatter but no heypi protocol
-                # lines for >15s, the Arduino is alive but in the wrong state
-                # (e.g. stuck mid-game from a previous run, or running a
-                # different sketch). Surface this loudly so it's not silent.
-                if not stuck_warned and (time.time() - started_t) > 15.0 and non_heypi_lines >= 2:
-                    dbg('!!! ARDUINO LOOKS STUCK — receiving non-protocol chatter but no "heypi..." reply')
-                    dbg('!!! Likely cause: Arduino did not reset on serial open, so it is past waitForPiToStart()')
-                    dbg('!!! Action: physically press RESET on the Arduino, OR power-cycle it, then re-run ./start.sh')
-                    stuck_warned = True
-                continue
+                m = HEYPI_RE.match(btxt)
+                if m:
+                    recovered = m.group(1) + m.group(2)
+                    dbg('getboard() RECOVERED corrupted prefix from {0!r} -> {1!r}'.format(btxt, recovered))
+                    btxt = recovered
+                else:
+                    non_heypi_lines += 1
+                    dbg('getboard() line did not start with heypi — ignoring (non-heypi count={0})'.format(non_heypi_lines))
+                    # If we've been getting Arduino chatter but no heypi protocol
+                    # lines for >15s, the Arduino is alive but in the wrong state
+                    # (e.g. stuck mid-game from a previous run, or running a
+                    # different sketch). Surface this loudly so it's not silent.
+                    if not stuck_warned and (time.time() - started_t) > 15.0 and non_heypi_lines >= 2:
+                        dbg('!!! ARDUINO LOOKS STUCK — receiving non-protocol chatter but no "heypi..." reply')
+                        dbg('!!! Likely cause: Arduino did not reset on serial open, so it is past waitForPiToStart()')
+                        dbg('!!! Action: physically press RESET on the Arduino, OR power-cycle it, then re-run ./start.sh')
+                        stuck_warned = True
+                    continue
+
+            # Do NOT strip a leading 'm' here. The main loop dispatches on
+            # bmessage[0] expecting 'm' for moves, and bmove() reads
+            # bmessage[1:5] for the from/to squares. Every other caller (mode,
+            # skill, movetime) strips its own typecode via [1:] / [1:3] etc.
+            # The legacy StartChessGameStockfish.py.getboard() has the same
+            # behaviour — return the payload with typecode intact.
+
+            dbg('***************** GOT INPUT FROM ARDUINO: {0!r} *****************'.format(btxt))
+            dbg('getboard() RETURN {0!r}'.format(btxt))
+            print(btxt)
+            return btxt
 
 
 def sendtoboard(stxt):
     """ sends a text string to the board """
+    dbg('***************** SENDING OUTPUT TO ARDUINO: {0!r} *****************'.format(stxt))
     dbg('sendtoboard() ENTER payload={0!r}'.format(stxt))
     log_serial_state(ser, 'sendtoboard-enter')
     print("\n Sent to board: heyArduino" + stxt)
@@ -453,10 +473,34 @@ def shutdownPi():
     call("sudo nohup shutdown -h now", shell=True)
     time.sleep(10)
 
-def sendToScreen(line1,line2,line3,size = '14'):
-    """Send three lines of text to the small OLED screen"""
-    screenScriptToRun = ["python3", "/home/pi/SmartChess/RaspberryPiCode/printToOLED.py", '-a '+ line1, '-b '+ line2, '-c '+ line3, '-s '+ size]
-    subprocess.Popen(screenScriptToRun)
+def sendToScreen(line1, line2, line3, size='14'):
+    """Send three lines of text to the small OLED screen.
+
+    Args are passed as separate list elements (NOT '-a ' + line1) so getopt
+    parses them correctly without a leading-space artifact.
+    Stderr is captured in a daemon thread so any printToOLED.py crash gets
+    surfaced through the dbg() log instead of silently disappearing.
+    """
+    dbg('sendToScreen() spawn: lines={0!r}|{1!r}|{2!r} size={3!r}'.format(line1, line2, line3, size))
+    screenScriptToRun = [
+        "python3", "/home/pi/SmartChess/RaspberryPiCode/printToOLED.py",
+        '-a', str(line1), '-b', str(line2), '-c', str(line3), '-s', str(size),
+    ]
+    try:
+        proc = subprocess.Popen(screenScriptToRun, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except Exception as e:
+        dbg('sendToScreen() Popen FAILED: {0!r}'.format(e))
+        return
+
+    def _drain(p):
+        try:
+            out, err = p.communicate(timeout=10)
+            if p.returncode != 0 or err:
+                dbg('OLED subprocess rc={0} stderr={1!r} stdout={2!r}'.format(p.returncode, err, out))
+        except Exception as e:
+            dbg('OLED subprocess drain failed: {0!r}'.format(e))
+
+    threading.Thread(target=_drain, args=(proc,), daemon=True).start()
 
 #Choose a moe of gameplay on the Arduino
 dbg('=== STARTUP: about to send ChooseMode to Arduino ===')
@@ -485,6 +529,14 @@ if gameplayMode == 'stockfish':
         _raw_skill = getboard()
         dbg('STOCKFISH skill raw return={0!r}'.format(_raw_skill))
         skillFromArduino = _raw_skill[1:3].lower()
+        # If a heypi line gets corrupted past prefix recovery (e.g. it gets
+        # parsed as a move 'M...' or color 'C...'), the value here won't be
+        # digits. Discard and re-read until we get a valid skill payload.
+        while not skillFromArduino.isdigit():
+            dbg('!!! skill payload {0!r} from raw {1!r} is not digits — discarding and re-reading'.format(skillFromArduino, _raw_skill))
+            _raw_skill = getboard()
+            dbg('STOCKFISH skill raw return (retry)={0!r}'.format(_raw_skill))
+            skillFromArduino = _raw_skill[1:3].lower()
         print ("Requested skill level:")
         print(skillFromArduino)
         dbg('STOCKFISH parsed skillFromArduino={0!r}'.format(skillFromArduino))
@@ -496,6 +548,11 @@ if gameplayMode == 'stockfish':
         _raw_movetime = getboard()
         dbg('STOCKFISH movetime raw return={0!r}'.format(_raw_movetime))
         movetimeFromArduino = _raw_movetime[1:].lower()
+        while not movetimeFromArduino.isdigit():
+            dbg('!!! movetime payload {0!r} from raw {1!r} is not digits — discarding and re-reading'.format(movetimeFromArduino, _raw_movetime))
+            _raw_movetime = getboard()
+            dbg('STOCKFISH movetime raw return (retry)={0!r}'.format(_raw_movetime))
+            movetimeFromArduino = _raw_movetime[1:].lower()
         print ("Requested time out setting:")
         print(movetimeFromArduino)
         dbg('STOCKFISH parsed movetimeFromArduino={0!r}'.format(movetimeFromArduino))
@@ -508,6 +565,8 @@ if gameplayMode == 'stockfish':
         sendToScreen ('Please enter','your move:','')
         skill = skillFromArduino
         movetime = movetimeFromArduino #6000
+        dbg('STOCKFISH setup complete — exiting setup loop')
+        break
 
 dbg('=== STARTUP: calling newgame() ===')
 fmove = newgame()
