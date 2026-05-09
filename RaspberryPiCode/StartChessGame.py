@@ -146,7 +146,8 @@ def sget():
             return mtext
 
 def getboard():
-    dbg('***************** ASKING ARDUINO FOR INPUT *****************')
+    dbg('************************************Asking for Input ************************************')
+    dbg('************************************Asking for Input ************************************')
     dbg('getboard() ENTER — waiting for line from Arduino')
     log_serial_state(ser, 'getboard-enter')
 
@@ -253,7 +254,8 @@ def getboard():
             # The legacy StartChessGameStockfish.py.getboard() has the same
             # behaviour — return the payload with typecode intact.
 
-            dbg('***************** GOT INPUT FROM ARDUINO: {0!r} *****************'.format(btxt))
+            dbg('************************************Received Input ************************************')
+            dbg('************************************Received Input ************************************')
             dbg('getboard() RETURN {0!r}'.format(btxt))
             print(btxt)
             return btxt
