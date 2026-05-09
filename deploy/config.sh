@@ -11,7 +11,7 @@ PI_PORT="22"
 PI_REMOTE_PATH="/home/pi/SmartChess/RaspberryPiCode"
 
 # Local path on the Mac to push from
-LOCAL_PATH="/Users/sandipsingh/SmartChess/RaspberryPiCode"
+LOCAL_PATH="/Users/sandipsingh/smart-chess/RaspberryPiCode"
 
 # Files / folders to exclude when syncing
 RSYNC_EXCLUDES=(

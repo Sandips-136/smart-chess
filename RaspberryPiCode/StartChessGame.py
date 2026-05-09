@@ -8,16 +8,63 @@
 
 # initiate chessboard
 from ChessBoard import ChessBoard
-import subprocess, time, serial
+import subprocess, time, serial, sys, traceback
+from datetime import datetime
 maxchess = ChessBoard()
 
+
+def dbg(msg):
+    """Timestamped debug print that flushes immediately so we see it over SSH."""
+    ts = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+    print('[DBG {0}] {1}'.format(ts, msg), flush=True)
+
+
+def log_serial_state(ser_obj, label=''):
+    """Dump everything we can see about the serial port state."""
+    try:
+        info = {
+            'label': label,
+            'port': getattr(ser_obj, 'port', '?'),
+            'baudrate': getattr(ser_obj, 'baudrate', '?'),
+            'timeout': getattr(ser_obj, 'timeout', '?'),
+            'is_open': getattr(ser_obj, 'is_open', '?'),
+        }
+        try:
+            info['in_waiting'] = ser_obj.in_waiting
+        except Exception as e:
+            info['in_waiting'] = 'ERR: {0}'.format(e)
+        try:
+            info['out_waiting'] = ser_obj.out_waiting
+        except Exception as e:
+            info['out_waiting'] = 'ERR: {0}'.format(e)
+        dbg('SERIAL_STATE {0}'.format(info))
+    except Exception as e:
+        dbg('SERIAL_STATE failed: {0}'.format(e))
+
+
+SERIAL_PORT = '/dev/ttyUSB0'   # for Pi Zero use '/dev/ttyAMA0' and for others use '/dev/ttyUSB0'.
+SERIAL_BAUD = 9600
+
 if __name__ == '__main__':
-    ser = serial.Serial('/dev/ttyUSB0', 9600, timeout=1)   # for Pi Zero use '/dev/ttyAMA0' and for others use '/dev/ttyUSB0'.
+    dbg('Opening serial port {0} @ {1} baud, timeout=1s'.format(SERIAL_PORT, SERIAL_BAUD))
+    try:
+        ser = serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=1)
+    except Exception as e:
+        dbg('FATAL: failed to open serial port: {0!r}'.format(e))
+        traceback.print_exc()
+        raise
+    dbg('Serial port opened OK')
+    log_serial_state(ser, 'after-open')
     ser.flush()
+    dbg('ser.flush() done')
 
 import time
+dbg('Sleeping 3s to let Arduino settle after USB reset')
 time.sleep(3)
+log_serial_state(ser, 'after-3s-sleep')
 ser.reset_input_buffer()
+dbg('ser.reset_input_buffer() done')
+log_serial_state(ser, 'after-reset-input-buffer')
 
 # initiate stockfish chess engine
 
@@ -72,33 +119,120 @@ def sget():
             return mtext
 
 def getboard():
-    print("\n Waiting for command from the Board")
-    
+    dbg('getboard() ENTER — waiting for line from Arduino')
+    log_serial_state(ser, 'getboard-enter')
+
+    poll_count = 0
+    last_log_t = time.time()
+
     while True:
-        if ser.in_waiting > 0:
-            btxt = ser.readline().decode('utf-8').rstrip().lower()
+        poll_count += 1
+
+        # Periodic heartbeat so we know the loop is alive (don't spam every iteration)
+        now = time.time()
+        if now - last_log_t >= 5.0:
+            try:
+                iw = ser.in_waiting
+            except Exception as e:
+                iw = 'ERR: {0!r}'.format(e)
+            dbg('getboard() still polling — polls={0} in_waiting={1}'.format(poll_count, iw))
+            last_log_t = now
+
+        try:
+            in_w = ser.in_waiting
+        except Exception as e:
+            dbg('getboard() ser.in_waiting raised: {0!r}'.format(e))
+            traceback.print_exc()
+            log_serial_state(ser, 'in_waiting-exception')
+            raise
+
+        if in_w > 0:
+            dbg('getboard() in_waiting={0} — about to readline()'.format(in_w))
+            try:
+                raw = ser.readline()
+            except serial.SerialException as e:
+                dbg('getboard() SerialException during readline: {0!r}'.format(e))
+                log_serial_state(ser, 'readline-SerialException')
+                traceback.print_exc()
+                # Try a recovery: drain + small sleep + retry once so we can see
+                # whether this is a transient hiccup or a real disconnect.
+                try:
+                    dbg('getboard() attempting recovery: reset_input_buffer + 0.5s sleep + retry readline')
+                    ser.reset_input_buffer()
+                    time.sleep(0.5)
+                    raw = ser.readline()
+                    dbg('getboard() recovery readline returned: {0!r}'.format(raw))
+                except Exception as e2:
+                    dbg('getboard() recovery FAILED: {0!r}'.format(e2))
+                    traceback.print_exc()
+                    log_serial_state(ser, 'recovery-failed')
+                    raise
+            except Exception as e:
+                dbg('getboard() unexpected exception during readline: {0!r}'.format(e))
+                traceback.print_exc()
+                log_serial_state(ser, 'readline-other-exception')
+                raise
+
+            dbg('getboard() raw bytes from readline: {0!r} (len={1})'.format(raw, len(raw)))
+
+            if not raw:
+                dbg('getboard() readline returned empty — continuing to poll')
+                continue
+
+            try:
+                btxt = raw.decode('utf-8').rstrip().lower()
+            except UnicodeDecodeError as e:
+                dbg('getboard() UTF-8 decode failed for {0!r}: {1!r} — skipping'.format(raw, e))
+                continue
+
+            dbg('getboard() decoded line: {0!r}'.format(btxt))
 
             if btxt.startswith('heypixshutdown'):
+                dbg('getboard() shutdown command received')
                 shutdownPi()
                 break
 
             if btxt.startswith('heypi'):
                 btxt = btxt[len('heypi'):]
+                dbg('getboard() stripped heypi prefix -> {0!r}'.format(btxt))
 
                 if btxt.startswith('m'):
                     btxt = btxt[1:]
+                    dbg('getboard() stripped leading m -> {0!r}'.format(btxt))
 
+                dbg('getboard() RETURN {0!r}'.format(btxt))
                 print(btxt)
                 return btxt
 
             else:
+                dbg('getboard() line did not start with heypi — ignoring')
                 continue
+
+
 def sendtoboard(stxt):
     """ sends a text string to the board """
+    dbg('sendtoboard() ENTER payload={0!r}'.format(stxt))
+    log_serial_state(ser, 'sendtoboard-enter')
     print("\n Sent to board: heyArduino" + stxt)
-    stxt = bytes(str(stxt).encode('utf8'))
+    payload = bytes(str(stxt).encode('utf8'))
+    full = b"heyArduino" + payload + b"\n"
+    dbg('sendtoboard() sleeping 2s before write (preserves original timing)')
     time.sleep(2)
-    ser.write(b"heyArduino" + stxt + "\n".encode('ascii'))
+    dbg('sendtoboard() writing {0} bytes: {1!r}'.format(len(full), full))
+    try:
+        n = ser.write(full)
+        dbg('sendtoboard() write() returned {0}'.format(n))
+        try:
+            ser.flush()
+            dbg('sendtoboard() flush() done')
+        except Exception as e:
+            dbg('sendtoboard() flush() raised: {0!r}'.format(e))
+    except Exception as e:
+        dbg('sendtoboard() write FAILED: {0!r}'.format(e))
+        traceback.print_exc()
+        log_serial_state(ser, 'sendtoboard-write-failed')
+        raise
+    log_serial_state(ser, 'sendtoboard-after-write')
 
 
 def newgame():
@@ -295,32 +429,46 @@ def sendToScreen(line1,line2,line3,size = '14'):
     subprocess.Popen(screenScriptToRun)
 
 #Choose a moe of gameplay on the Arduino
+dbg('=== STARTUP: about to send ChooseMode to Arduino ===')
 time.sleep(1)
 sendtoboard("ChooseMode")
 print ("Waiting for mode of play to be decided on the Arduino")
 sendToScreen ('Choose opponent:','1) Against PC','2) Remote human')
-gameplayMode = getboard()[1:].lower()
+dbg('=== STARTUP: calling getboard() to read gameplay mode ===')
+_raw_mode = getboard()
+dbg('STARTUP gameplay mode raw return={0!r}'.format(_raw_mode))
+gameplayMode = _raw_mode[1:].lower()
 print ("Requested gameplay mode:")
 print(gameplayMode)
+dbg('STARTUP parsed gameplayMode={0!r}'.format(gameplayMode))
 
 
 if gameplayMode == 'stockfish':
     while True:
+        dbg('=== STOCKFISH branch: sending ReadyStockfish ===')
         sendtoboard("ReadyStockfish")
 
         # get intial settings (such as level)
         print ("Waiting for level command to be received from Arduino")
         sendToScreen ('Choose computer','difficulty level:','(0 -> 8)')
-        skillFromArduino = getboard()[1:3].lower()
+        dbg('=== STOCKFISH: calling getboard() for skill level ===')
+        _raw_skill = getboard()
+        dbg('STOCKFISH skill raw return={0!r}'.format(_raw_skill))
+        skillFromArduino = _raw_skill[1:3].lower()
         print ("Requested skill level:")
         print(skillFromArduino)
+        dbg('STOCKFISH parsed skillFromArduino={0!r}'.format(skillFromArduino))
 
         # get intial settings (such as move time)
         print ("Waiting for move time command to be received from Arduino")
         sendToScreen ('Choose computer','move time:','(0 -> 8)')
-        movetimeFromArduino = getboard()[1:].lower()
+        dbg('=== STOCKFISH: calling getboard() for move time ===')
+        _raw_movetime = getboard()
+        dbg('STOCKFISH movetime raw return={0!r}'.format(_raw_movetime))
+        movetimeFromArduino = _raw_movetime[1:].lower()
         print ("Requested time out setting:")
         print(movetimeFromArduino)
+        dbg('STOCKFISH parsed movetimeFromArduino={0!r}'.format(movetimeFromArduino))
 
 
         # assume new game
@@ -330,17 +478,22 @@ if gameplayMode == 'stockfish':
         sendToScreen ('Please enter','your move:','')
         skill = skillFromArduino
         movetime = movetimeFromArduino #6000
-        
+
+dbg('=== STARTUP: calling newgame() ===')
 fmove = newgame()
+dbg('STARTUP newgame() returned fmove={0!r}'.format(fmove))
 
 while True:
 
         # Get  message from board
+        dbg('=== MAIN LOOP: calling getboard() for next move ===')
         bmessage = getboard()
         print ("Move command received from Arduino")
         print(bmessage)
+        dbg('MAIN LOOP bmessage={0!r}'.format(bmessage))
         # Message options   Move, Newgame, level, style
         code = bmessage[0]
+        dbg('MAIN LOOP code={0!r}'.format(code))
 
 
 
