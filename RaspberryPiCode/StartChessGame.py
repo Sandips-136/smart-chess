@@ -55,15 +55,32 @@ if __name__ == '__main__':
         raise
     dbg('Serial port opened OK')
     log_serial_state(ser, 'after-open')
+
+    # --- Force-reset the Arduino by pulsing DTR ---
+    # Some boards (or USB-serial chips with the auto-reset cap removed) don't
+    # reset just by opening the port. Without a reset, the Arduino sketch stays
+    # in whatever state the previous run left it in — typically stuck inside
+    # receiveMoveFromPi() waiting for a "heyArduinom..." that will never come.
+    # Pulsing DTR low->high forces the bootloader to run, so the Arduino starts
+    # fresh in setup() -> waitForPiToStart() every time we launch.
+    try:
+        dbg('Forcing Arduino reset: DTR=False (high)')
+        ser.dtr = False
+        time.sleep(0.25)
+        dbg('Forcing Arduino reset: DTR=True (low) — pulse complete')
+        ser.dtr = True
+    except Exception as e:
+        dbg('DTR pulse FAILED (continuing anyway): {0!r}'.format(e))
+
     ser.flush()
     dbg('ser.flush() done')
 
 import time
-dbg('Sleeping 3s to let Arduino settle after USB reset')
+dbg('Sleeping 3s to let Arduino bootloader run + setup() complete')
 time.sleep(3)
 log_serial_state(ser, 'after-3s-sleep')
 ser.reset_input_buffer()
-dbg('ser.reset_input_buffer() done')
+dbg('ser.reset_input_buffer() done — discarded any boot-time noise')
 log_serial_state(ser, 'after-reset-input-buffer')
 
 # initiate stockfish chess engine
@@ -124,6 +141,9 @@ def getboard():
 
     poll_count = 0
     last_log_t = time.time()
+    started_t = time.time()
+    non_heypi_lines = 0
+    stuck_warned = False
 
     while True:
         poll_count += 1
@@ -205,7 +225,17 @@ def getboard():
                 return btxt
 
             else:
-                dbg('getboard() line did not start with heypi — ignoring')
+                non_heypi_lines += 1
+                dbg('getboard() line did not start with heypi — ignoring (non-heypi count={0})'.format(non_heypi_lines))
+                # If we've been getting Arduino chatter but no heypi protocol
+                # lines for >15s, the Arduino is alive but in the wrong state
+                # (e.g. stuck mid-game from a previous run, or running a
+                # different sketch). Surface this loudly so it's not silent.
+                if not stuck_warned and (time.time() - started_t) > 15.0 and non_heypi_lines >= 2:
+                    dbg('!!! ARDUINO LOOKS STUCK — receiving non-protocol chatter but no "heypi..." reply')
+                    dbg('!!! Likely cause: Arduino did not reset on serial open, so it is past waitForPiToStart()')
+                    dbg('!!! Action: physically press RESET on the Arduino, OR power-cycle it, then re-run ./start.sh')
+                    stuck_warned = True
                 continue
 
 

@@ -22,10 +22,7 @@ int loadingStatus(int chessSquaresAlreadyLit){
     targetColumn = chessSquaresAlreadyLit;
   } else if (chessSquaresAlreadyLit > 7){
     targetRow = chessSquaresAlreadyLit / 8;
-    Serial.println(targetRow);
     targetColumn = chessSquaresAlreadyLit % 8;
-    Serial.println(targetColumn);
-    Serial.println();
   }
   chessboardLEDS.drawPixel(targetColumn,targetRow,GREEN);
   chessboardLEDS.show();
