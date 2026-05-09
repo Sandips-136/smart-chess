@@ -1,14 +1,17 @@
 [Unit]
-Description=DIYM chess service
-After=network.target
+Description=DIYM smart chessboard
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/python2 -u StartChessGame.py
-WorkingDirectory=/home/pi/downloads
-StandardOutput=inherit
-StandardError=inherit
-Restart=always
+Type=simple
 User=pi
+WorkingDirectory=/home/pi/SmartChess/RaspberryPiCode
+ExecStart=/home/pi/SmartChess/RaspberryPiCode/smartenv/bin/python -u StartChessGame.py
+StandardOutput=journal
+StandardError=journal
+Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
