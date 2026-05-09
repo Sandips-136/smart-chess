@@ -133,6 +133,7 @@ def sget():
     # to indicate current last line of stdout
     stx=""
     engine.stdin.write('isready\n')
+    engine.stdin.flush()
     print('\nengine:')
     while True :
         text = engine.stdout.readline().strip()
@@ -465,6 +466,7 @@ def bmoveOnline(fmove):
 def put(command):
     print('\nyou:\n\t'+command)
     engine.stdin.write(command+'\n')
+    engine.stdin.flush()  # belt-and-braces in case bufsize=1 isn't honored
 
 def shutdownPi():
     sendToScreen ('Shutting down...','Wait 20s then','disconnect power.')
